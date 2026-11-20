@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="my">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Photon Realtime Core Browser Test</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#08111f;color:#eaf2ff;font-family:system-ui,-apple-system,sans-serif;padding:22px;max-width:760px;margin:auto}h1{font-size:25px}.card{background:#111f33;border:1px solid #29415f;border-radius:16px;padding:18px;margin:14px 0}p{color:#b9c9dc;line-height:1.6}label{display:block;color:#b9c9dc;margin-top:12px}button,select,input{font:inherit;border-radius:10px;padding:13px;border:1px solid #426184;background:#0a1729;color:#fff;width:100%;margin:7px 0 12px}button{background:#1769c2;border:0;font-weight:700;cursor:pointer}button:disabled{opacity:.45}.row{display:flex;gap:10px}.row>*{flex:1}#sdkStatus{font-weight:700;margin-bottom:12px}.ok{color:#5be39a!important}.bad{color:#ff8585!important}.warn{color:#ffd166!important}#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#050b13;border-radius:10px;padding:12px;min-height:170px;max-height:45vh;overflow:auto;font:12px/1.5 ui-monospace,monospace}.small{font-size:13px;color:#91a6bf}
+</style>
+</head>
+<body>
+<h1>Photon Realtime Test</h1>
+<p>ဒီစာမျက်နှာက Browser native WebSocket ကိုသုံးပြီး Photon Cloud ကို တိုက်ရိုက်ချိတ်ဆက်ပါတယ်။ Worker Server မလိုပါ။ HTTPS hosting ပေါ်မှာဖွင့်ပါ။</p>
+<div class="card">
+ <div id="sdkStatus" class="warn">Photon SDK ကို စစ်ဆေးနေသည်...</div>
+ <div id="where" class="small"></div>
+ <label for="server">Photon App</label>
+ <select id="server">
+  <option value="92b6bbdd-41d8-4c97-aa07-e6f295bf8cd6">Server 1 — SC Event Game</option>
+  <option value="16744732-0a97-466c-8427-e43bf500bf8a" selected>Server 2 — SC Event Game 2</option>
+ </select>
+ <label for="region">Region</label>
+ <select id="region"><option value="asia" selected>asia</option><option value="eu">eu</option><option value="us">us</option><option value="jp">jp</option><option value="kr">kr</option><option value="au">au</option></select>
+ <label for="room">Room Name</label><input id="room" value="SC-PHOTON-TEST" maxlength="40">
+ <div class="row"><button id="connect" disabled>CONNECT &amp; JOIN</button><button id="disconnect" disabled style="background:#7a3540">DISCONNECT</button></div>
+ <p id="status" class="warn">အခြေအနေ: SDK စောင့်နေသည်</p>
+ <p class="small">App Version: 1.0 · Browser WebSocket · Room auto-create: ON · Max players: 8</p>
+</div>
+<div class="card"><b>Connection Log</b><pre id="log">Page loaded.</pre></div>
+<script type="module">
+const $=id=>document.getElementById(id);
+let sdk=null,client=null,busy=false;
+function log(s){const line=`[${new Date().toLocaleTimeString()}] ${s}`;$('log').textContent+='\n'+line;$('log').scrollTop=$('log').scrollHeight;console.log(line)}
+function status(s,cls='warn'){$('status').textContent='အခြေအနေ: '+s;$('status').className=cls}
+function setBusy(v){busy=v;$('connect').disabled=v||!sdk;$('disconnect').disabled=!v}
+async function disconnect(){
+ const old=client;client=null;setBusy(false);
+ if(old){try{if(old.isConnected)await old.disconnect()}catch(e){log('Disconnect: '+(e.message||e))}try{old.dispose()}catch{}}
+}
+$('disconnect').onclick=async()=>{await disconnect();status('Disconnected')};
+$('connect').onclick=async()=>{
+ if(!sdk){status('SDK မတက်သေးပါ','bad');return}
+ await disconnect();$('log').textContent='Starting connection...';setBusy(true);
+ const appId=$('server').value,region=$('region').value,roomName=$('room').value.trim();
+ if(!roomName){status('Room Name ထည့်ပါ','bad');setBusy(false);return}
+ let active=null;
+ try{
+  log('App ID: '+appId);log('Region: '+region+' | Room: '+roomName+' | AppVersion: 1.0');
+  status('Photon client ဖန်တီးနေသည်...');
+  active=await sdk.createRealtimeClient({appId,appVersion:'1.0',regionSelection:'select'});
+  client=active;
+  active.on('error',e=>{log('PHOTON ERROR: '+(e.code||'')+' '+(e.message||String(e)));status('Photon Error','bad')});
+  active.on('disconnected',e=>{log('DISCONNECTED: '+JSON.stringify(e));if(client===active){setBusy(false);status('Disconnected','bad')}});
+  active.on('playerJoined',({player})=>log('PLAYER JOINED: #'+player.number+' '+(player.name||'')));
+  active.on('playerLeft',({player})=>log('PLAYER LEFT: #'+player.number));
+  status('Name Server သို့ ချိတ်ဆက်နေသည်...');
+  const regionsPromise=active.availableRegions();
+  const connectPromise=active.connect();
+  const regions=await regionsPromise;
+  log('Available regions: '+regions.map(r=>r.code).join(', '));
+  const chosen=regions.find(r=>String(r.code).toLowerCase()===region.toLowerCase());
+  if(!chosen)throw new Error('ရွေးထားသော region မတွေ့ပါ: '+region);
+  await active.selectRegion(chosen.code);
+  await connectPromise;
+  log('Connected to Photon Cloud.');
+  status('Room Join လုပ်နေသည်...');
+  const joinedRoom=await active.joinOrCreateRoom(roomName,{maxPlayers:8});
+  log('SUCCESS: Joined room '+joinedRoom.name+' | Players: '+joinedRoom.playerCount+'/'+joinedRoom.maxPlayers);
+  status('SUCCESS — Room ထဲဝင်ပြီးပါပြီ','ok');
+ }catch(e){
+  log('EXCEPTION: '+(e.stack||e.message||String(e)));
+  status('Connection Failed — Log ကိုစစ်ပါ','bad');
+  if(active){try{if(active.isConnected)await active.disconnect()}catch{}try{active.dispose()}catch{}}
+  if(client===active)client=null;
+  setBusy(false);
+ }
+};
+$('where').textContent='Page origin: '+location.origin+' | Secure context: '+(isSecureContext?'YES':'NO');
+try{
+ log('Loading Browser-compatible Photon Realtime Core...');
+ const mod=await import('https://cdn.jsdelivr.net/npm/@photonengine/realtime-core@6/realtimecore.mjs');
+ if(typeof mod.createRealtimeClient!=='function')throw new Error('createRealtimeClient export မတွေ့ပါ');
+ sdk=mod;
+ $('sdkStatus').textContent='SDK Loaded ✓';$('sdkStatus').className='ok';
+ $('connect').disabled=false;status('စမ်းသပ်ရန် အသင့်ဖြစ်ပါပြီ','ok');
+ log('Photon Realtime Core ready.');
+}catch(e){
+ $('sdkStatus').textContent='SDK Load Failed ✕';$('sdkStatus').className='bad';
+ status('SDK မတက်ပါ — Log ကိုကြည့်ပါ','bad');
+ log('SDK LOAD ERROR: '+(e.stack||e.message||String(e)));
+ log('မှတ်ချက်: HTTPS hosting မှာဖွင့်ပါ။ CDN access မရလျှင် SDK load မဖြစ်နိုင်ပါ။');
+}
+</script>
+</body>
+</html>
